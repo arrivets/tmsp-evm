@@ -1,31 +1,23 @@
-package tmsp-evm
-
-package dvm
+package tmspevm
 
 import (
     "os"
-    "fmt"
     "path/filepath"
     "encoding/json"
     "io/ioutil"
-    "math/big"
     "log"
     "net/http"
     "sync"
 
     "github.com/gorilla/mux"
     "github.com/ethereum/go-ethereum/accounts"
-    "github.com/ethereum/go-ethereum/core/types"
-    "github.com/ethereum/go-ethereum/common"
-    "github.com/ethereum/go-ethereum/rpc"
-
 )
 
 const defaultGas = uint64(90000)
 
 type Service struct {
     sync.Mutex
-    platform Platform
+    platform *Platform
     dataDir string
     apiAddr string
     accountManager *accounts.Manager
@@ -35,7 +27,7 @@ func NewService(dataDir, apiAddr string) *Service{
     return &Service{dataDir: dataDir, apiAddr: apiAddr}
 }
 
-func (m *Service) Init(platform Platform) error {
+func (m *Service) Init(platform *Platform) error {
     m.platform = platform
     return nil
 }
@@ -102,7 +94,7 @@ func (m *Service) unlockAccounts() error {
 }
 
 func (m *Service) getState() (*State, error) {
-    return m.platform.GetState()
+    return m.platform.GetState(), nil
 }
 
 func (m *Service) serveAPI() {
@@ -110,7 +102,6 @@ func (m *Service) serveAPI() {
     router.HandleFunc("/accounts", m.makeHandler(accountsHandler)).Methods("GET")
     router.HandleFunc("/tx", m.makeHandler(transactionHandler)).Methods("POST")
     router.HandleFunc("/tx/{tx_hash}", m.makeHandler(transactionReceiptHandler)).Methods("GET")
-    router.HandleFunc("/stats", m.makeHandler(statsHandler)).Methods("GET")
     http.ListenAndServe(m.apiAddr, router)
 }
 

@@ -1,4 +1,4 @@
-package tmsp-evm
+package tmspevm
 
 import (
     "math/big"

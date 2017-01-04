@@ -1,11 +1,11 @@
-package tmsp-evm
+package tmspevm
 
 import (
-    "time"
     "math/big"
     "fmt"
     "bytes"
     "sync"
+    "log"
 
     "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -22,19 +22,19 @@ import (
 )
 
 var (
-    gasLimit = 10000000000000000000
+    gasLimit = big.NewInt(1000000000000000000)
     txMetaSuffix   = []byte{0x01}
 	receiptsPrefix = []byte("receipts-")
     MIPMapLevels = []uint64{1000000, 500000, 100000, 50000, 1000}
 )
 
 type State struct {
-    platform    Platform
+    platform    *Platform
 
     db          ethdb.Database
     commitMutex sync.Mutex
     statedb     *state.StateDB
-    was         WriteAheadState
+    was         *WriteAheadState
 
     signer      ethTypes.Signer
     chainConfig params.ChainConfig //vm.env is still tightly coupled with chainConfig
@@ -55,7 +55,7 @@ type WriteAheadState struct {
         gp           *core.GasPool
 }
 
-func (s *State) Init(platform Platform) error {
+func (s *State) Init(platform *Platform) error {
     var err error
     s.platform = platform
     s.db, err  =  ethdb.NewMemDatabase() //ephemeral database
@@ -68,9 +68,9 @@ func (s *State) Init(platform Platform) error {
     }
 
     s.statedb = state  
-    s.ResetWAS(state.Copy())    
+    s.resetWAS(state.Copy())    
 
-    s.signer = types.NewEIP155Signer(big.NewInt(1))
+    s.signer = ethTypes.NewEIP155Signer(big.NewInt(1))
     s.chainConfig = params.ChainConfig{big.NewInt(1), new(big.Int), new(big.Int), true, new(big.Int), common.Hash{}, new(big.Int), new(big.Int)}
     s.vmConfig = vm.Config{Tracer: vm.NewStructLogger(nil)}
     return nil
@@ -93,13 +93,13 @@ func (s *State)	AppendTx(tx []byte) tmspTypes.Result {
     s.commitMutex.Lock()
     defer s.commitMutex.Unlock()
 
-    var t types.Transaction
+    var t ethTypes.Transaction
     if err := rlp.Decode(bytes.NewReader(tx), &t); err != nil {
         return tmspTypes.ErrEncodingError       
     }
     msg, err := t.AsMessage(s.signer)
     if err != nil {
-        return tmspTypes.NewError(CodeType_InternalError, 
+        return tmspTypes.NewError(tmspTypes.CodeType_InternalError, 
          fmt.Sprintf("AppendTx AsMessage: %v", err))
     }
     context := vm.Context{
@@ -116,7 +116,7 @@ func (s *State)	AppendTx(tx []byte) tmspTypes.Result {
     // Apply the transaction to the current state (included in the env)
     _, gas, err := core.ApplyMessage(vmenv, msg, s.was.gp)
     if err != nil {
-        return tmspTypes.NewError(CodeType_InternalError,
+        return tmspTypes.NewError(tmspTypes.CodeType_InternalError,
          fmt.Sprintf("AppendTx ApplyMessage: %v", err))
     }
 
@@ -124,7 +124,7 @@ func (s *State)	AppendTx(tx []byte) tmspTypes.Result {
 
     // Create a new receipt for the transaction, storing the intermediate root and gas used by the tx
     // based on the eip phase, we're passing wether the root touch-delete accounts.
-    receipt := types.NewReceipt(s.statedb.IntermediateRoot(true).Bytes(), s.was.totalUsedGas)
+    receipt := ethTypes.NewReceipt(s.statedb.IntermediateRoot(true).Bytes(), s.was.totalUsedGas)
     receipt.TxHash = t.Hash()
     receipt.GasUsed = new(big.Int).Set(gas)
     // if the transaction created a contract, store the creation address in the receipt.
@@ -133,52 +133,53 @@ func (s *State)	AppendTx(tx []byte) tmspTypes.Result {
     }
     // Set the receipt logs and create a bloom for filtering
     receipt.Logs = s.was.state.GetLogs(t.Hash())
-    receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
+    receipt.Bloom = ethTypes.CreateBloom(ethTypes.Receipts{receipt})
 
     s.was.txIndex += 1
-    s.was.transactions = append(s.was.transactions, tx)
-    s.was.receipts = append(s.was, receipt)
-    s.was.allLogs = append(s.was, receipt.Logs...)
+    s.was.transactions = append(s.was.transactions, &t)
+    s.was.receipts = append(s.was.receipts, receipt)
+    s.was.allLogs = append(s.was.allLogs, receipt.Logs...)
 
     return tmspTypes.OK
 }
 
 // Validate a tx for the mempool
 func (s *State)	CheckTx(tx []byte) tmspTypes.Result {
-    var t types.Transaction
+    log.Printf("XXXX in CheckTx")
+    var t ethTypes.Transaction
     if err := rlp.Decode(bytes.NewReader(tx), &t); err != nil {
         return tmspTypes.ErrEncodingError       
     }
     
-    from, err := types.Sender(s.signer, t)
+    from, err := ethTypes.Sender(s.signer, &t)
     if err != nil {
-            return tmspTypes.NewError(CodeType_InternalError,
-         fmt.Sprintf("CheckTx invalid sender: %v", err))
+        return tmspTypes.NewError(tmspTypes.CodeType_InternalError,
+        fmt.Sprintf("CheckTx invalid sender: %v", err))
     }
     
     if s.was.state.GetNonce(from) > t.Nonce() {
-            return tmspTypes.ErrBadNonce
+        return tmspTypes.ErrBadNonce
     }
 
     // Check the transaction doesn't exceed the current
     // block limit gas.
-    if s.was.gp.GasLimit().Cmp(t.Gas()) < 0 {
-            return return tmspTypes.NewError(CodeType_InternalError,
-         fmt.Sprintf("CheckTx gas limit: %v", err))
+    if (*big.Int)(s.was.gp).Cmp(t.Gas()) < 0 {
+        return tmspTypes.NewError(tmspTypes.CodeType_InternalError,
+        fmt.Sprintf("CheckTx gas limit: %v", err))
     }
 
     // Transactions can't be negative. This may never happen
     // using RLP decoded transactions but may occur if you create
     // a transaction using the RPC for example.
     if t.Value().Cmp(common.Big0) < 0 {
-            return tmspTypes.NewError(CodeType_InternalError,
-         fmt.Sprintf("CheckTx negative value: %v", err))
+        return tmspTypes.NewError(tmspTypes.CodeType_InternalError,
+        fmt.Sprintf("CheckTx negative value: %v", err))
     }
 
     // Transactor should have enough funds to cover the costs
     // cost == V + GP * GL
     if s.was.state.GetBalance(from).Cmp(t.Cost()) < 0 {
-            return tmspTypes.ErrInsufficientFunds
+        return tmspTypes.ErrInsufficientFunds
     }
 
     //XXX: Check intinsic gas
@@ -188,18 +189,18 @@ func (s *State)	CheckTx(tx []byte) tmspTypes.Result {
 
 // Query for state
 func (s *State)	Query(query []byte) tmspTypes.Result {
-    tmspTypes.NewResultOK("not implemented")
+    return tmspTypes.NewResultOK(nil,"not implemented")
 }
 
 // Return the application Merkle root hash
 func (s *State)	Commit() tmspTypes.Result {
-    app.commitMutex.Lock()
-    defer app.commitMutex.Unlock()
+    s.commitMutex.Lock()
+    defer s.commitMutex.Unlock()
 
     //commit all state changes to the database 
-    hashArray, err := s.was.state.Commit()
+    hashArray, err := s.was.state.Commit(true)
     if err != nil {
-        log.Infof("Error committing ethereum state trie: %v", err)
+        log.Printf("Error committing ethereum state trie: %v", err)
         return tmspTypes.ErrInternalError
     }
    
@@ -208,14 +209,14 @@ func (s *State)	Commit() tmspTypes.Result {
     s.statedb = s.was.state
     s.resetWAS(s.statedb.Copy())
 
-    return tmspTypes.NewResultOK(hashArray, "")
+    return tmspTypes.NewResultOK(hashArray.Bytes(), "")
 }
 
 //----------------------------------------------------------------------------
 
 // runs in Commit once we have the new state
 func (s *State) resetWAS(state *state.StateDB) {
-        app.was = &WriteAheadState{
+        s.was = &WriteAheadState{
                 state:        state,
                 txIndex:      0,
                 totalUsedGas: big.NewInt(0),
@@ -224,8 +225,8 @@ func (s *State) resetWAS(state *state.StateDB) {
 }
 
 func (s *State) CreateAccounts(accounts AccountMap) error {
-    app.commitMutex.Lock()
-    defer app.commitMutex.Unlock()
+    s.commitMutex.Lock()
+    defer s.commitMutex.Unlock()
 
     for addr, account := range accounts {
 		address := common.HexToAddress(addr)
@@ -235,7 +236,7 @@ func (s *State) CreateAccounts(accounts AccountMap) error {
 			s.was.state.SetState(address, common.HexToHash(key), common.HexToHash(value))
 		}
 	}
-	hash, err := s.was.state.Commit()
+	_, err := s.was.state.Commit(true)
     if err != nil {
 		return fmt.Errorf("cannot write state: %v", err)
 	}
@@ -268,7 +269,7 @@ func (s *State) GetTransaction(hash common.Hash) (*ethTypes.Transaction, error) 
 	return &tx, nil
 }
 
-func (s *State) GetReceipt(txHash common.Hash) (*ethTypesypes.Receipt, error) {
+func (s *State) GetReceipt(txHash common.Hash) (*ethTypes.Receipt, error) {
 	data, err := s.db.Get(append(receiptsPrefix, txHash[:]...))
 	if err != nil {
 		return nil, fmt.Errorf("get-receipt: %v",err)

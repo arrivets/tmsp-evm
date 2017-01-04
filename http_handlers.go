@@ -1,4 +1,4 @@
-package tmsp-evm
+package tmspevm
 
 import (
     "math/big"
@@ -86,7 +86,7 @@ func transactionHandler(w http.ResponseWriter, r *http.Request, m *Service) {
     
 }
 
-func transactionReceiptHandler(w http.ResponseWriter, r *http.Request, m *DVMService) {
+func transactionReceiptHandler(w http.ResponseWriter, r *http.Request, m *Service) {
     param := r.URL.Path[len("/tx/"):]
     txHash := common.HexToHash(param)
     log.Printf("in receipt handler(%s)\n", txHash.Hex())
@@ -147,30 +147,9 @@ func transactionReceiptHandler(w http.ResponseWriter, r *http.Request, m *DVMSer
     w.Write(js)
 }
 
-func statsHandler(w http.ResponseWriter, r *http.Request, m *DVMService){
-    platform := m.platform
-
-    raftPlatfrom, ok := platform.(*DVMRaftPlatform)
-    if !ok {
-        http.Error(w, "Stats only applies to Raft platform", http.StatusMethodNotAllowed)
-    }
-
-    stats := raftPlatfrom.GetStats()
-
-    js, err := json.Marshal(stats)
-    if err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
-        return
-    }
-
-    w.Header().Set("Content-Type", "application/json")
-    w.Write(js)
-}
-
 //////////////////////////////////////////////////////////////////////////////
 
-func prepareTransaction(args SendTxArgs, state *State, accMan *accounts.Manager )
- (*types.Transaction, error) {
+func prepareTransaction(args SendTxArgs, state *State, accMan *accounts.Manager) (*types.Transaction, error) {
 	var err error   
 	args, err = prepareSendTxArgs(args)
 	if err != nil {
