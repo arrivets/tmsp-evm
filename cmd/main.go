@@ -9,8 +9,12 @@ import (
 
 	tevm "github.com/arrivets/tmsp-evm"
     "gopkg.in/urfave/cli.v1"
-    "github.com/ethereum/go-ethereum/cmd/utils"
-    cfg "github.com/tendermint/go-config"
+    
+	"github.com/ethereum/go-ethereum/cmd/utils"
+    "github.com/ethereum/go-ethereum/logger"
+	"github.com/ethereum/go-ethereum/logger/glog"
+
+	cfg "github.com/tendermint/go-config"
     tmcfg "github.com/tendermint/tendermint/config/tendermint"
     tmlog "github.com/tendermint/go-logger"
 )
@@ -75,13 +79,22 @@ func makeApp() *cli.App {
         TmspAddressFlag, 
         APIAddrFlag }
     app.Action = run
+	
+	app.After = func(ctx *cli.Context) error {
+		logger.Flush()
+		return nil
+	}
+
+	// logging
+	glog.SetV(logger.Detail)
+	glog.SetToStderr(true)
 	return app
 }
 
 func run(ctx *cli.Context) error {
-	dataDir := ctx.GlobalString(DataDirFlag.Name)
+	ethDir := filepath.Join(ctx.GlobalString(DataDirFlag.Name),"eth")
 	config := tevm.Config{
-		EthDir: filepath.Join(dataDir,"eth"),
+		EthDir: ethDir,
 		ApiAddr: ctx.GlobalString(APIAddrFlag.Name),
         TmConfig: getTendermintConfig(ctx),
 	}
@@ -94,8 +107,7 @@ func run(ctx *cli.Context) error {
 }
 
 func getTendermintConfig(ctx *cli.Context) cfg.Config {
-	dataDir := ctx.GlobalString(DataDirFlag.Name)
-	tmDir := filepath.Join(dataDir, "tendermint")
+	tmDir := filepath.Join(ctx.GlobalString(DataDirFlag.Name), "tendermint")
 	os.Setenv("TMROOT", tmDir)
 	config := tmcfg.GetConfig("")
 	config.Set("node_laddr", ctx.GlobalString(NodeAddressFlag.Name))
