@@ -5,26 +5,32 @@ import (
     "path/filepath"
     "encoding/json"
     "io/ioutil"
-    "log"
     "net/http"
     "sync"
 
     "github.com/gorilla/mux"
     "github.com/ethereum/go-ethereum/accounts"
+    "github.com/tendermint/go-logger"
+    "github.com/tendermint/log15"
+    
 )
 
 const defaultGas = uint64(90000)
 
 type Service struct {
     sync.Mutex
-    platform *Platform
-    dataDir string
-    apiAddr string
+    platform        *Platform
+    dataDir         string
+    apiAddr         string
     accountManager *accounts.Manager
+    log             log15.Logger
 }
 
 func NewService(dataDir, apiAddr string) *Service{
-    return &Service{dataDir: dataDir, apiAddr: apiAddr}
+    return &Service{
+        dataDir: dataDir,
+        apiAddr: apiAddr,
+        log: logger.New("module","service")}
 }
 
 func (m *Service) Init(platform *Platform) error {
@@ -33,13 +39,13 @@ func (m *Service) Init(platform *Platform) error {
 }
 
 func (m *Service) Run() {
-    checkErr(m.makeAccountManager())
+    m.checkErr(m.makeAccountManager())
 
-    checkErr(m.unlockAccounts())
+    m.checkErr(m.unlockAccounts())
 
-    checkErr(m.createGenesisAccounts())
+    m.checkErr(m.createGenesisAccounts())
     
-    log.Println("serving api...")
+    m.log.Info("serving api...")
     m.serveAPI()
 }
 
@@ -113,9 +119,10 @@ func (m *Service) makeHandler(fn func (http.ResponseWriter, *http.Request, *Serv
     }
 }
 
-func checkErr(err error) {
+func (m *Service) checkErr(err error) {
     if err != nil {
-        log.Fatal("ERROR:", err)
+        m.log.Error("ERROR", err)
+        os.Exit(1)
     }
 }
 

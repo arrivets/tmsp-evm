@@ -5,7 +5,6 @@ import (
     "fmt"
     "bytes"
     "sync"
-    "log"
 
     "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -18,6 +17,8 @@ import (
     "github.com/ethereum/go-ethereum/params"
 
     tmspTypes "github.com/tendermint/tmsp/types"
+    "github.com/tendermint/go-logger"
+    "github.com/tendermint/log15"
 
 )
 
@@ -39,11 +40,14 @@ type State struct {
     signer      ethTypes.Signer
     chainConfig params.ChainConfig //vm.env is still tightly coupled with chainConfig
 	vmConfig    vm.Config
+
+    log         log15.Logger
 }
 
 // write ahead state, updated with each AppendTx
 // and reset on Commit
 type WriteAheadState struct {
+        db     ethdb.Database
         state  *state.StateDB
 
         txIndex      int
@@ -53,9 +57,13 @@ type WriteAheadState struct {
 
         totalUsedGas *big.Int
         gp           *core.GasPool
+
+        log          log15.Logger
 }
 
 func (s *State) Init(platform *Platform) error {
+    s.log = logger.New("module","evmstate")
+
     var err error
     s.platform = platform
     s.db, err  =  ethdb.NewMemDatabase() //ephemeral database
@@ -90,11 +98,13 @@ func (s *State)	SetOption(key string, value string) (log string){
 
 // Append a tx
 func (s *State)	AppendTx(tx []byte) tmspTypes.Result {
+    s.log.Debug("AppendTx")
     s.commitMutex.Lock()
     defer s.commitMutex.Unlock()
 
     var t ethTypes.Transaction
     if err := rlp.Decode(bytes.NewReader(tx), &t); err != nil {
+        s.log.Error("Decoding transaction","error", err)
         return tmspTypes.ErrEncodingError       
     }
     msg, err := t.AsMessage(s.signer)
@@ -102,6 +112,8 @@ func (s *State)	AppendTx(tx []byte) tmspTypes.Result {
         return tmspTypes.NewError(tmspTypes.CodeType_InternalError, 
          fmt.Sprintf("AppendTx AsMessage: %v", err))
     }
+    s.log.Debug("Decoded tx", "hash", t.Hash().Hex())
+    
     context := vm.Context{
         CanTransfer: core.CanTransfer,
         Transfer:    core.Transfer,
@@ -116,6 +128,7 @@ func (s *State)	AppendTx(tx []byte) tmspTypes.Result {
     // Apply the transaction to the current state (included in the env)
     _, gas, err := core.ApplyMessage(vmenv, msg, s.was.gp)
     if err != nil {
+        s.log.Error("Applying transaction to WAS","error", err)
         return tmspTypes.NewError(tmspTypes.CodeType_InternalError,
          fmt.Sprintf("AppendTx ApplyMessage: %v", err))
     }
@@ -140,30 +153,36 @@ func (s *State)	AppendTx(tx []byte) tmspTypes.Result {
     s.was.receipts = append(s.was.receipts, receipt)
     s.was.allLogs = append(s.was.allLogs, receipt.Logs...)
 
+    s.log.Debug("Applied tx to WAS", "hash", t.Hash().Hex())
     return tmspTypes.OK
 }
 
 // Validate a tx for the mempool
 func (s *State)	CheckTx(tx []byte) tmspTypes.Result {
-    log.Printf("XXXX in CheckTx")
+    s.log.Debug("CheckTx")
     var t ethTypes.Transaction
     if err := rlp.Decode(bytes.NewReader(tx), &t); err != nil {
+        s.log.Error("Decoding tx", "error", err)
         return tmspTypes.ErrEncodingError       
     }
-    
+    s.log.Debug("Decoded tx", "hash", t.Hash().Hex())
+
     from, err := ethTypes.Sender(s.signer, &t)
     if err != nil {
+        s.log.Error("Extracting tx sender","error",err)
         return tmspTypes.NewError(tmspTypes.CodeType_InternalError,
         fmt.Sprintf("CheckTx invalid sender: %v", err))
     }
     
     if s.was.state.GetNonce(from) > t.Nonce() {
+        s.log.Error("Bad nonce")
         return tmspTypes.ErrBadNonce
     }
 
     // Check the transaction doesn't exceed the current
     // block limit gas.
     if (*big.Int)(s.was.gp).Cmp(t.Gas()) < 0 {
+        s.log.Error("Not enough gas")
         return tmspTypes.NewError(tmspTypes.CodeType_InternalError,
         fmt.Sprintf("CheckTx gas limit: %v", err))
     }
@@ -172,6 +191,7 @@ func (s *State)	CheckTx(tx []byte) tmspTypes.Result {
     // using RLP decoded transactions but may occur if you create
     // a transaction using the RPC for example.
     if t.Value().Cmp(common.Big0) < 0 {
+        s.log.Error("Negative value")
         return tmspTypes.NewError(tmspTypes.CodeType_InternalError,
         fmt.Sprintf("CheckTx negative value: %v", err))
     }
@@ -179,11 +199,12 @@ func (s *State)	CheckTx(tx []byte) tmspTypes.Result {
     // Transactor should have enough funds to cover the costs
     // cost == V + GP * GL
     if s.was.state.GetBalance(from).Cmp(t.Cost()) < 0 {
+        s.log.Error("Insufficient funds")
         return tmspTypes.ErrInsufficientFunds
     }
 
     //XXX: Check intinsic gas
-
+    s.log.Debug("Checked tx", "hash", t.Hash().Hex())
     return tmspTypes.OK
 }
 
@@ -194,21 +215,23 @@ func (s *State)	Query(query []byte) tmspTypes.Result {
 
 // Return the application Merkle root hash
 func (s *State)	Commit() tmspTypes.Result {
+    s.log.Info("Commit")
     s.commitMutex.Lock()
     defer s.commitMutex.Unlock()
 
     //commit all state changes to the database 
-    hashArray, err := s.was.state.Commit(true)
+    hashArray, err := s.was.Commit()
     if err != nil {
-        log.Printf("Error committing ethereum state trie: %v", err)
+        s.log.Error("Committing WAS", "error", err)
         return tmspTypes.ErrInternalError
     }
    
     // reset the write ahead state for the next block
     // with the latest eth state
     s.statedb = s.was.state
+    s.log.Info("Committed", "root", hashArray.Hex())
+    
     s.resetWAS(s.statedb.Copy())
-
     return tmspTypes.NewResultOK(hashArray.Bytes(), "")
 }
 
@@ -217,11 +240,14 @@ func (s *State)	Commit() tmspTypes.Result {
 // runs in Commit once we have the new state
 func (s *State) resetWAS(state *state.StateDB) {
         s.was = &WriteAheadState{
+                db:           s.db,
                 state:        state,
                 txIndex:      0,
                 totalUsedGas: big.NewInt(0),
                 gp:           new(core.GasPool).AddGas(gasLimit),
+                log:          s.log,
         }
+        s.log.Notice("Reset Write Ahead State")
 }
 
 func (s *State) CreateAccounts(accounts AccountMap) error {
@@ -235,6 +261,7 @@ func (s *State) CreateAccounts(accounts AccountMap) error {
 		for key, value := range account.Storage {
 			s.was.state.SetState(address, common.HexToHash(key), common.HexToHash(value))
 		}
+        s.log.Info("Adding account", "address", addr)
 	}
 	_, err := s.was.state.Commit(true)
     if err != nil {
@@ -259,11 +286,13 @@ func (s *State) GetTransaction(hash common.Hash) (*ethTypes.Transaction, error) 
 	// Retrieve the transaction itself from the database
 	data, err := s.db.Get(hash.Bytes())
 	if err != nil {
+        s.log.Error("GetTransaction", "error", err )
 		return nil, fmt.Errorf("get-transaction: %v",err)
 	}
 	var tx ethTypes.Transaction
 	if err := rlp.DecodeBytes(data, &tx); err != nil {
-		return nil, err
+		s.log.Error("GetTransaction", "error", err )
+        return nil, err
 	}
 	
 	return &tx, nil
@@ -272,13 +301,66 @@ func (s *State) GetTransaction(hash common.Hash) (*ethTypes.Transaction, error) 
 func (s *State) GetReceipt(txHash common.Hash) (*ethTypes.Receipt, error) {
 	data, err := s.db.Get(append(receiptsPrefix, txHash[:]...))
 	if err != nil {
+        s.log.Error("GetReceipt", "error", err )
 		return nil, fmt.Errorf("get-receipt: %v",err)
 	}
 	var receipt ethTypes.ReceiptForStorage
 	if err := rlp.DecodeBytes(data, &receipt); err != nil {
+        s.log.Error("GetReceipt", "error", err )
         return nil, err
     }
 	
 	return (*ethTypes.Receipt)(&receipt), nil
 }
 
+func (was *WriteAheadState) Commit() (common.Hash, error) {
+    //commit all state changes to the database 
+    hashArray, err := was.state.Commit(true)
+    if err != nil {
+        was.log.Error("Committing WAS", "error", err)
+        return common.Hash{}, tmspTypes.ErrInternalError
+    }
+    if err := was.writeTransactions(); err != nil {
+        was.log.Error("Writing txs", "error", err)
+        return common.Hash{}, tmspTypes.ErrInternalError
+    }
+    if err := was.writeReceipts(); err != nil {
+        was.log.Error("Writing receipts", "error", err)
+        return common.Hash{}, tmspTypes.ErrInternalError
+    }
+    return  hashArray, nil
+}
+
+func (was *WriteAheadState) writeTransactions() error {
+	batch := was.db.NewBatch()
+
+    for _, tx := range was.transactions {
+         data, err := rlp.EncodeToBytes(tx)
+        if err != nil {
+            return err
+        }
+        if err := batch.Put(tx.Hash().Bytes(), data); err != nil {
+            return err
+        }
+    }
+   		
+	// Write the scheduled data into the database
+	return batch.Write()
+}
+
+func (was *WriteAheadState) writeReceipts() error {
+	batch := was.db.NewBatch()
+
+    for _, receipt := range was.receipts {
+        storageReceipt := (*ethTypes.ReceiptForStorage)(receipt)
+        data, err := rlp.EncodeToBytes(storageReceipt)
+        if err != nil {
+            return err
+        }
+        if err := batch.Put(append(receiptsPrefix, receipt.TxHash.Bytes()...), data); err != nil {
+            return err
+        }
+    }
+    
+    return batch.Write()
+}

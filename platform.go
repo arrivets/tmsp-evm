@@ -8,6 +8,8 @@ import (
     "github.com/tendermint/tmsp/server"
     rpcclient "github.com/tendermint/go-rpc/client"
 	core_types "github.com/tendermint/tendermint/rpc/core/types"
+    "github.com/tendermint/go-logger"
+    "github.com/tendermint/log15"
 )
 
 type Config struct {
@@ -22,13 +24,19 @@ type Platform struct {
     state   *State
     client  *rpcclient.ClientURI
     config  Config
+    log     log15.Logger
 }
 
 func NewPlatform(config Config) (*Platform, error) {
     service := NewService(config.EthDir, config.ApiAddr)
     state := new(State)
     client := rpcclient.NewClientURI(config.TmConfig.GetString("rpc_laddr"))
-    return &Platform{service:service, state:state, client:client, config:config}, nil
+    log := logger.New("module", "platform")
+    return &Platform{service:service,
+         state:state,
+         client:client,
+         config:config,
+         log:log }, nil
 }
 
 func (p *Platform) Run() error {

@@ -4,7 +4,6 @@ import (
     "math/big"
     "net/http"
     "encoding/json"
-    "log"
 
     "github.com/ethereum/go-ethereum/rpc"
     "github.com/ethereum/go-ethereum/rlp"
@@ -89,7 +88,7 @@ func transactionHandler(w http.ResponseWriter, r *http.Request, m *Service) {
 func transactionReceiptHandler(w http.ResponseWriter, r *http.Request, m *Service) {
     param := r.URL.Path[len("/tx/"):]
     txHash := common.HexToHash(param)
-    log.Printf("in receipt handler(%s)\n", txHash.Hex())
+    m.log.Info("in receipt handler(%s)\n", txHash.Hex())
 
     state, err := m.getState()
     if err != nil {
@@ -108,8 +107,6 @@ func transactionReceiptHandler(w http.ResponseWriter, r *http.Request, m *Servic
         http.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-
-	
 
 	signer := types.NewEIP155Signer(big.NewInt(1))
 	from, err := types.Sender(signer, tx)
