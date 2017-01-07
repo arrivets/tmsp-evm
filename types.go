@@ -1,25 +1,26 @@
 package tmspevm
 
 import (
-    "math/big"
-    
+	"math/big"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
-type AccountMap map[string] struct {
-    Code    string
-    Storage map[string]string
-    Balance string
+type AccountMap map[string]struct {
+	Code    string
+	Storage map[string]string
+	Balance string
 }
-type JsonAccount struct{
-        Address string
-        Balance *big.Int 
-    }
+type JsonAccount struct {
+	Address string
+	Balance *big.Int
+}
 
 type JsonAccountList struct {
-    Accounts []JsonAccount
+	Accounts []JsonAccount
 }
+
 // SendTxArgs represents the arguments to sumbit a new transaction into the transaction pool.
 type SendTxArgs struct {
 	From     common.Address  `json:"from"`
@@ -30,4 +31,3 @@ type SendTxArgs struct {
 	Data     string          `json:"data"`
 	Nonce    *rpc.HexNumber  `json:"nonce"`
 }
-
