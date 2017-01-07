@@ -2,11 +2,19 @@
 
 set -eux
 
-PEERS="172.17.0.3:46656,172.17.0.4:46656,172.17.0.5:46656,172.17.0.6:46656"
+PEERS="172.66.5.1:46656,172.66.5.2:46656,172.66.5.3:46656,172.66.5.4:46656"
 MPWD=$(pwd)
+
+docker network create \
+  --driver=bridge \
+  --subnet=172.66.0.0/16 \
+  --ip-range=172.66.5.0/24 \
+  --gateway=172.66.5.254 \
+  testnet
+
 for i in $(seq 1 4)
 do
-    docker create --name=node$i -p 808$i:8080 tmspevm --seeds=$PEERS
+    docker create --name=node$i --net=testnet --ip=172.66.5.$i -p 808$i:8080 tmspevm --seeds=$PEERS
     docker cp $MPWD/node$i node$i:/.tmsp-evm
     docker start node$i 
 done

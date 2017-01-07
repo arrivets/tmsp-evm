@@ -3,4 +3,4 @@ for i in $(seq 1 4)
 do
     docker rm -f node$i
 done
-
+docker network rm testnet
