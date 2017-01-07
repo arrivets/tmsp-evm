@@ -1,0 +1,12 @@
+#!/bin/bash
+
+set -eux
+
+PEERS="172.17.0.3:46656,172.17.0.4:46656,172.17.0.5:46656,172.17.0.6:46656"
+MPWD=$(pwd)
+for i in $(seq 1 4)
+do
+    docker create --name=node$i -p 808$i:8080 tmspevm --seeds=$PEERS
+    docker cp $MPWD/node$i node$i:/.tmsp-evm
+    docker start node$i 
+done

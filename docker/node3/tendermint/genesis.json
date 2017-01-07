@@ -1,0 +1,39 @@
+{
+	"app_hash": "",
+	"chain_id": "test-chain",
+	"genesis_time": "0001-01-01T00:00:00.000Z",
+	"validators": [
+		{
+			"amount": 10,
+			"name": "",
+			"pub_key": [
+				1,
+				"DFF2D4103ABF699E3F9E9DBA97BB9B1E0E9BD87CE826E5319C5FB89FBFB661ED"
+			]
+		},
+		{
+			"amount": 10,
+			"name": "",
+			"pub_key": [
+				1,
+				"E132E80E39700AC901FEE461B785BAEED763A81ECF89CEE1E4A02484E8F93C9F"
+			]
+		},
+        {
+			"amount": 10,
+			"name": "",
+			"pub_key": [
+				1,
+				"2C5A4F302B8BFF3B9B9A92CBB2A8223B2DA8BBB6FD1EB3D64B968BA5D2D0A03D"
+			]
+		},
+        {
+			"amount": 10,
+			"name": "",
+			"pub_key": [
+				1,
+				"EE6CE86349DC6A853A09121945DEB7AF167F71FB0790C79010F4CA0CE713592C"
+			]
+		}
+	]
+}
